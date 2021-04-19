@@ -1,0 +1,342 @@
+---
+title: "Part2 Hypoglycemic Classification"
+author:  Kim Tiller
+date:  April 19, 2021
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Load Data, prepare training and validation, performance function
+```{r}
+#Load Data and split into train and validate
+drug = read.csv("hypoglycemic.csv")
+drug$hypoglycemic <- as.factor(drug$hypoglycemic)
+drug$asthma <- as.factor(drug$asthma)
+drug$cad <- as.factor(drug$cad)
+drug$chf <- as.factor(drug$chf)
+drug$copd <- as.factor(drug$copd)
+drug$cardio_respiratory_arrest <- as.factor(drug$cardio_respiratory_arres)
+drug$cerebro_vascular <- as.factor(drug$cerebro_vascular)
+drug$decubitus_ulcer <- as.factor(drug$decubitus_ulcer)
+drug$delirium <- as.factor(drug$delirium)
+#drug$developmental_disability <- as.factor(drug$developmental_disabilit)
+drug$mental_health <- as.factor(drug$mental_health)
+#drug$pregnancy <- as.factor(drug$pregnancy)
+drug$renal <- as.factor(drug$renal)
+drug$substance_abuse <- as.factor(drug$substance_abuse)
+drug$vascular_disease <- as.factor(drug$vascular_disease)
+
+#Set Training data to contain 70% of records
+set.seed(123)
+getSamp <- sample(nrow(drug), .7*nrow(drug),replace=F)
+train <- drug[getSamp,]
+valid = drug[-getSamp,]
+
+#function for evaluating trees
+performance <- function(table, n=2){
+tn <- table[1,1]
+fp <- table[1,2]
+fn <- table[2,1]
+tp <- table[2,2]
+sensitivity <- tp/(tp+fn)
+specificity <- tn/(tn+fp)
+ppv <- tp/(tp+fp)
+npv <- tn/(tn+fn)
+acc <- (tp+tn)/(tp+tn+fp+fn)
+
+result <- paste("Sensitivity (True Postive Rate)= ", round(sensitivity, n),
+                "\nSpecificity (True Negative Rate) = ", round(specificity, n),
+                "\nFalse Negative Rate = ", round(1-sensitivity,n),
+                "\nPositives Predictive Value (odds of positive if postive prediction) = ", round(ppv, n),
+                "\nNegative Predictive value (odds of negative if negative prediction) = ", round(npv, n),
+                "\nAccuracy = ", round(acc, n), "\n", sep="")
+cat(result)
+}
+
+#How many hypoglycemic members?
+summary(drug$hypoglycemic)
+```
+##Explore training options with oversampling, undersampling, and synthetic data 
+(SKIP this in Final Output: Use Train instead of bal_train for all models
+Note:  Evaluation was performed using several over and undersampling techniques as well as synthetic data using the ROSE package.  These techniques produced very low sensitivity and high rate of false negatives.  RandomForest mode performed best with undersampling.  However, for the purposes of this exercise, the original slightly undersampled (30% of diabetes members without hypoglycemia) was used to compare models. It is noted that these models may include overfitting.
+```{r, echo=FALSE, results='hide'}
+#over and under sampling techniques and rose
+#library(ROSE)
+#bal_train <- ovun.sample(hypoglycemic ~ .-mem_key, data = train, method = "under", N=800, seed = 1)$data
+#summary(bal_train$hypoglycemic)
+```
+```{r}
+#bal_train <- ovun.sample(hypoglycemic ~ .-mem_key, data = train, method = "over", N= 2000, seed = 1)$data
+#summary(bal_train$hypoglycemic)
+```
+```{r}
+#syn_train <- ROSE(hypoglycemic ~ .-mem_key, data = train, seed=1)$data
+#summary(syn_train$hypoglycemic)
+```
+##Decision Tree using tree library
+```{r}
+#Decision Tree using tree library
+#Train the tree
+library(tree)
+set.seed(123)
+dtree = tree(hypoglycemic ~ . -mem_key, data = train) 
+summary(dtree)
+```
+
+```{r}
+#predict using validation set
+dt.pred=predict(dtree,valid,type="class") 
+dt.perf <- table(dt.pred,valid$hypoglycemic)
+dt.perf
+
+#validate
+performance(dt.perf)
+
+#plot the tree for better understanding
+plot(dtree)
+text(dtree,pretty=0) #label nodes with text
+print(dtree)
+
+```
+##Prune dtree to reduce complexity
+```{r}
+#use 10-fold CV to choose optimal # of leaves
+set.seed(123)
+dtree.cv = cv.tree(dtree, FUN = prune.misclass)
+dtree.cv
+#plot(dtree.cv)
+
+#Extract optimal number of leaves
+min(dtree.cv$dev)  #min deviance
+which(dtree.cv$dev == min(dtree.cv$dev)) #which records are equal to minimum
+dtree.cv$size[ which(dtree.cv$dev == min(dtree.cv$dev))] #what size corresponds to min error
+
+```
+##Prune dtree and evaluate
+```{r}
+#Prune down to the optimal leaves
+set.seed(123)
+prune.dtree = prune.misclass(dtree,best=5) 
+
+#Predict using Pruned tree
+dt.pred2=predict(prune.dtree,valid,type="class")
+dt.perf2 <- table(dt.pred2,valid$hypoglycemic)
+dt.perf2
+
+#Results
+performance(dt.perf2)
+
+plot(prune.dtree)
+text(prune.dtree,pretty=0)
+summary(prune.dtree)
+print(prune.dtree)
+```
+Performance is the same with 5 terminal nodes
+
+##Try another tree using rpart library
+```{r}
+#Decision Tree Using rpart and prepare to prune
+library(rpart)
+set.seed(123)
+rtree <- rpart(hypoglycemic ~ . -mem_key, data = train, method="class")
+
+#Predict
+rt.pred <- predict(rtree, valid, type="class")
+rt.perf <- table(rt.pred,valid$hypoglycemic)
+rt.perf
+#Performance
+performance(rt.perf)
+```
+I am interested in High Sensitivity and low False Negatives.  This tree is sliglty better than dtree with default parameters.
+```{r}
+#Plot
+library(rpart.plot)
+prp(rtree, type=2, extra = "auto", fallen.leaves = TRUE, cex = .8, uniform = TRUE,compress = TRUE, main="rpart Decision Tree" )
+print(rtree)
+```
+Rpart tree is more complex than dtree.
+##Prepare to Prune rtree
+```{r}
+#prepare to prune rtree
+set.seed(123)
+rtree$cptable
+plotcp(rtree)
+```
+Smallest xerror = .8500 with xerror between .8 and .9, all of the xerrors fall within this range
+Try cp = 0.0214 or .0125 or .01071
+##Prune rtree
+```{r}
+#Prune the rpart tree and validate
+rtree.pruned <-prune(rtree,cp=.01071) #better performance at cp=.01071
+rtree.pred2 <- predict(rtree.pruned, valid, type="class")
+rtree.perf2 <- table(valid$hypoglycemic, rtree.pred2, dnn=c("Actual", "predicted"))
+
+#Performance
+rtree.perf2
+performance(rtree.perf2)
+
+#Plot
+library(rpart.plot)
+prp(rtree.pruned, type=2, extra = 104, fallen.leaves = TRUE, main="Decision Tree")
+
+```
+Pruning rpart tree lowered sensitivity and increased false negative rate.
+
+##RandomForest
+** rftree **
+```{r warning=FALSE}
+library(randomForest)
+rftree = randomForest(hypoglycemic~. -mem_key, data=train, mtry=11,ntree=1000, importance=T, Xtest = valid, ytest = valid$hypoglycemic  )
+rftree
+performance(rftree$confusion)
+```
+
+
+```{r}
+print(rftree)
+```
+
+```{r}
+#Evaluate
+importance(rftree, type=2) #node impurity
+varImpPlot(rftree)
+```
+Test trees on hyperglycemic2 data set from different customer
+```{r}
+#Load 2nd set of data from different customer
+drug2 = read.csv("hypoglycemic2.csv")
+drug2$hypoglycemic <- as.factor(drug2$hypoglycemic)
+drug2$asthma <- as.factor(drug2$asthma)
+drug2$cad <- as.factor(drug2$cad)
+drug2$chf <- as.factor(drug2$chf)
+drug2$copd <- as.factor(drug2$copd)
+drug2$cardio_respiratory_arrest <- as.factor(drug2$cardio_respiratory_arres)
+drug2$cerebro_vascular <- as.factor(drug2$cerebro_vascular)
+drug2$decubitus_ulcer <- as.factor(drug2$decubitus_ulcer)
+drug2$delirium <- as.factor(drug2$delirium)
+drug2$mental_health <- as.factor(drug2$mental_health)
+drug2$renal <- as.factor(drug2$renal)
+drug2$substance_abuse <- as.factor(drug2$substance_abuse)
+drug2$vascular_disease <- as.factor(drug2$vascular_disease)
+
+summary(drug2$hypoglycemic)
+```
+##Dtree using Customer 2
+```{r}
+#Predict using Pruned dtree
+dt2.pred2=predict(prune.dtree,drug2,type="class")
+dt2.perf2 <- table(dt2.pred2,drug2$hypoglycemic)
+
+#Results
+print("Tree Performance on Customer 2 Data")
+dt2.perf2
+performance(dt2.perf2)
+
+```
+
+##RPart Using Customer 2
+```{r}
+#Predict Rpart using Customer 2 Data
+rt2.pred2 <- predict(rtree, drug2, type="class")
+rt2.perf2 <- table(rt2.pred2, drug2$hypoglycemic)
+
+#Performance
+print("Rpart Performance on Customer 2 Data")
+rt2.perf2
+performance(rt2.perf2)
+```
+##RandomForest using Customer2
+Pretty good results using medicare population for different customer.
+```{r}
+#Random Forest on different set
+rf2.pred2 <- predict(rftree, newdata=drug2, type="response")
+rf2.perf2 <- table(rf2.pred2, drug2$hypoglycemic)
+print("Random Forest on Customer 2 Data")
+rf2.perf2
+performance(rf2.perf2)
+```
+##Boosting
+```{r}
+#Try Boosting since there are a large number of variables
+#reload to remove factors, use drug3 but same training data as previous models
+library(gbm)
+drug3 = read.csv("hypoglycemic.csv")
+
+#Set Training data to contain 70% of records
+set.seed(123)
+getSamp <- sample(nrow(drug3), .7*nrow(drug3),replace=F)
+train3 <- drug3[getSamp,]
+valid3 = drug3[-getSamp,]
+```
+```{r}
+#undersampling (Excluded from final run)
+#bal_train <- ovun.sample(hypoglycemic ~ .-mem_key, data = train, method = "under", N=800, seed = 1)$data
+#summary(as.factor(bal_train$hypoglycemic))
+```
+
+```{r warning=FALSE}
+#Boosting 
+boost = gbm(hypoglycemic~. -mem_key, data=train3, distribution = "bernoulli", n.trees=1000
+              , shrinkage=.001, interaction.depth = 3)
+
+#Information
+boost
+summary(boost)
+```
+```{r}
+#Performance of GBM Model
+boost.pred = predict(boost, newdata=valid3, n.trees=1000)
+boost.results = table(boost.pred >.5, (valid3$hypoglycemic))
+print("GBM performance on Customer 1 Data")
+performance(boost.results)
+```
+
+##Evaluate boosted model with Customer2 data
+```{r}
+drug4 = read.csv("hypoglycemic2.csv")  #reload to remove factors
+drug4$hypoglycemic <- as.factor(drug4$hypoglycemic)
+boost2.pred2 = predict(boost, newdata=drug4, n.trees=1000, type = "response")
+boost2.results2 = table(boost2.pred2>.5, drug4$hypoglycemic)
+print("GBM on Customer 2 Data")
+performance(boost2.results2)
+```
+##Cross validation to reduce overfitting
+```{r warning=FALSE}
+#Estimate error rate with 10-fold cv
+n=2121
+k=10
+groups = c(rep(1:k,floor(n/k)),1:(n-floor(n/k)*k))  
+set.seed(123)
+cvgroups = sample(groups,n)
+boostcv.predict = rep(-1,n)
+
+for(i in 1:k){
+  groupi = (cvgroups==i)
+  boostcv = gbm(hypoglycemic~. -mem_key, data=drug3[!groupi,], distribution = "bernoulli", n.trees=1000
+              , shrinkage=.001, interaction.depth = 3)
+  boostcv.predict[groupi] = predict(boostcv, newdata=drug3[groupi,], n.trees=1000, type = "response")
+}
+
+summary(boostcv)
+```
+##Results of boosted prediction
+```{r}
+boostcv.predict[1:10]
+bcvresults = table(boostcv.predict>.5, drug3$hypoglycemic)
+print("GBM with CV on Customer1 using CV")
+performance(bcvresults)
+```
+##CV Boosted model on Customer 2 data
+```{r}
+bcv2.pred2 = predict(boostcv, newdata = drug4, n.trees = 1000, type = "response")
+bcv2.perf2 = table(bcv2.pred2 >.5, drug4$hypoglycemic)
+print("GBM with CV on Customer2 using CV")
+performance(bcv2.perf2)
+```
+
+
+
+
