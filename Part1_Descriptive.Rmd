@@ -65,12 +65,12 @@ usage_calc <-
            nd_ip=sum(nd_ip_days),
            nd_op=sum(nd_op_visits),
            nd_cost=sum(nd_medical+nd_pharmacy), .groups="keep") %>%
-  mutate(diab_er1000 = (diab_er/diab_mbrs)*12000,
-         diab_ip1000 = (diab_ip/diab_mbrs)*12000,
+  mutate(diab_er1000 = (diab_er/diab_mbrs)*1000,
+         diab_ip1000 = (diab_ip/diab_mbrs)*1000,
          diab_oppm = (diab_op/diab_mbrs),
          diab_pmpy = diab_cost/diab_mbrs,
-         nd_er1000 = (nd_er/nd_mbrs)*12000,
-         nd_ip1000 = (nd_ip/nd_mbrs)*12000,
+         nd_er1000 = (nd_er/nd_mbrs)*1000,
+         nd_ip1000 = (nd_ip/nd_mbrs)*1000,
          nd_oppm = (nd_op/nd_mbrs),
          nd_pmpy = nd_cost/nd_mbrs)
 
